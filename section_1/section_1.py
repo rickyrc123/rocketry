@@ -42,11 +42,11 @@ class RocketSimulation:
         
         # TODO 1: Calculate the mass flow rate using the rocket equation
         # Hint: mdot = thrust / (isp * g0)
-        self.mdot = _______________
+        self.mdot = self.thrust / (self.isp * 9.81)#_______________
         
         # TODO 2: Calculate engine burn time
         # Hint: burn_time = fuel_mass / mdot
-        self.burn_time = _______________
+        self.burn_time = self.fuel_mass / self.mdot #_______________
         
     def atmospheric_density(self, altitude: float) -> float:
         """
@@ -64,7 +64,7 @@ class RocketSimulation:
         rho0 = 1.225
         scale_height = 8000
         
-        return _______________
+        return rho0 * np.exp(-altitude / scale_height)#_______________
     
     def drag_force(self, velocity: np.ndarray, altitude: float) -> np.ndarray:
         """
@@ -85,10 +85,10 @@ class RocketSimulation:
         
         # TODO 4: Calculate drag magnitude
         # Use: D = 0.5 * rho * V^2 * Cd * A
-        drag_magnitude = _______________
+        drag_magnitude = 0.5 * rho * speed**2 * self.drag_coeff * self.reference_area#_______________
         
         # TODO 5: Calculate drag direction (opposite to velocity)
-        drag_direction = _______________
+        drag_direction = -velocity/speed #_______________
         
         return drag_magnitude * drag_direction
     
@@ -109,18 +109,18 @@ class RocketSimulation:
         engine_on = t < self.burn_time
         
         # TODO 6: Calculate current thrust (0 if engine off)
-        current_thrust = _______________
+        current_thrust = self.thrust if engine_on else 0.0 #_______________
         
         # Calculate forces
         # TODO 7: Calculate thrust force components
         # Thrust acts along the rocket body axis (angle theta)
-        thrust_x = _______________
-        thrust_y = _______________
+        thrust_x = current_thrust * np.cos(theta) #_______________
+        thrust_y = current_thrust * np.sin(theta) #_______________
         
         # TODO 8: Calculate gravitational force components
         # Weight always acts downward
-        weight_x = _______________
-        weight_y = _______________
+        weight_x = 0.0#_______________
+        weight_y = -mass * self.g0 #_______________
         
         # Calculate drag forces
         velocity = np.array([vx, vy])
@@ -128,25 +128,55 @@ class RocketSimulation:
         
         # TODO 9: Apply Newton's second law to get accelerations
         # F = ma, so a = F/m
-        ax = _______________
-        ay = _______________
+        ax = (thrust_x + weight_x - drag[0]) / mass #_______________
+        ay = (thrust_y + weight_y - drag[1]) / mass #_______________
         
         # TODO 10: Calculate mass change rate
         # dm/dt = -mdot when engine is on, 0 when off
-        dmdt = _______________
+        dmdt = -self.mdot if engine_on else 0.0 #_______________
         
         # TODO 11: Implement gravity turn logic
-        # For gravity turn: theta should follow the flight path angle
-        # Flight path angle: gamma = arctan(vy / vx)
-        # For simplicity, make theta follow gamma with some delay
         if engine_on and t > 10:  # Start gravity turn after 10 seconds
-            flight_path_angle = _______________
-            dtheta_dt = 0.1 * (flight_path_angle - theta)  # Simple proportional control
+            if t <= 15:  # Initial pitch-over maneuver (10-15 seconds)
+                target_theta = np.pi/2 - 0.1 * (t - 10)  # Gradually pitch from 90° to 85°
+                dtheta_dt = 0.5 * (target_theta - theta)  # Quick response to initiate turn
+            else:  # Follow flight path angle after initial maneuver
+                if abs(vx) > 1.0:  # Only when we have horizontal velocity
+                    flight_path_angle = np.arctan2(vy, vx)
+                    dtheta_dt = 0.1 * (flight_path_angle - theta)
+                else:
+                    dtheta_dt = 0.0
         else:
             dtheta_dt = 0.0
         
         return np.array([vx, vy, ax, ay, dmdt, dtheta_dt])
     
+    def equations_of_motion_vertical(self, t: float, state: np.ndarray) -> np.ndarray:
+        x, y, vx, vy, mass, theta = state
+
+        theta = np.pi/2
+
+        engine_on = t < self.burn_time
+        current_thrust = self.thrust if engine_on else 0.0
+
+        thrust_x = 0.0
+        thrust_y = current_thrust
+
+        weight_x = 0.0
+        weight_y = -mass * self.g0
+
+        velocity = np.array([vx, vy])
+        drag = self.drag_force(velocity, y)
+
+        ax = (thrust_x + weight_x - drag[0]) / mass
+        ay = (thrust_y + weight_y - drag[1]) / mass
+
+        dmdt = -self.mdot if engine_on else 0.0
+
+        dtheta_dt = 0.0
+
+        return np.array([vx, vy, ax, ay, dmdt, dtheta_dt])
+
     def euler_integration(self, dt: float, t_end: float) -> Tuple[np.ndarray, np.ndarray]:
         """
         Integrate equations of motion using Euler's method
@@ -161,7 +191,7 @@ class RocketSimulation:
         # Initial conditions
         # TODO 12: Set initial state vector
         # [x, y, vx, vy, mass, theta] = [0, 0, 0, 0, initial_mass, pi/2]
-        state = np.array([_______________])
+        state = np.array([0.0, 0.0, 0.0, 0.0, self.m0, np.pi/2]) 
         
         # Initialize arrays
         time_points = np.arange(0, t_end + dt, dt)
@@ -177,7 +207,12 @@ class RocketSimulation:
             # TODO 13: Implement Euler's method
             # state_new = state_old + dt * derivatives
             derivatives = self.equations_of_motion(t, state)
-            state = _______________
+            state = state + dt * derivatives #_______________
+            
+            # Check for numerical instability
+            if np.any(np.isnan(state)) or np.any(np.abs(state) > 1e10):
+                print(f"Numerical instability detected at t={t:.1f}s")
+                return time_points[:i], state_history[:i]
         
         return time_points, state_history
     
@@ -208,13 +243,18 @@ class RocketSimulation:
             
             # TODO 14: Implement RK4 method
             # Calculate k1, k2, k3, k4 coefficients
-            k1 = _______________
-            k2 = _______________
-            k3 = _______________
-            k4 = _______________
+            k1 = dt * self.equations_of_motion(t, state) #_______________
+            k2 = dt * self.equations_of_motion(t + dt/2, state + k1/2) #_______________
+            k3 = dt * self.equations_of_motion(t + dt/2, state + k2/2) #_______________
+            k4 = dt * self.equations_of_motion(t + dt, state + k3) #_______________
             
             # TODO 15: Combine k coefficients for final update
-            state = _______________
+            state = state + (k1 + 2*k2 + 2*k3 + k4)/6 #_______________
+            
+            # Check for numerical instability
+            if np.any(np.isnan(state)) or np.any(np.abs(state) > 1e10):
+                print(f"Numerical instability detected at t={t:.1f}s")
+                return time_points[:i], state_history[:i]
         
         return time_points, state_history
 
@@ -236,7 +276,7 @@ def plot_trajectory(time_euler, states_euler, time_rk4, states_rk4):
     
     # TODO 18: Plot velocity magnitude vs time
     vel_euler = np.sqrt(states_euler[:, 2]**2 + states_euler[:, 3]**2)
-    vel_rk4 = _______________
+    vel_rk4 = np.sqrt(states_rk4[:, 2]**2 + states_rk4[:, 3]**2) #_______________
     axes[0, 1].plot(time_euler, vel_euler, 'r--', label='Euler', linewidth=2)
     axes[0, 1].plot(time_rk4, vel_rk4, 'b-', label='RK4', linewidth=2)
     axes[0, 1].set_xlabel('Time (s)')
@@ -256,7 +296,7 @@ def plot_trajectory(time_euler, states_euler, time_rk4, states_rk4):
     
     # TODO 20: Plot pitch angle vs time
     pitch_euler = np.degrees(states_euler[:, 5])
-    pitch_rk4 = _______________
+    pitch_rk4 = np.degrees(states_rk4[:, 5]) #_______________
     axes[1, 1].plot(time_euler, pitch_euler, 'r--', label='Euler', linewidth=2)
     axes[1, 1].plot(time_rk4, pitch_rk4, 'b-', label='RK4', linewidth=2)
     axes[1, 1].set_xlabel('Time (s)')
@@ -272,29 +312,98 @@ def analyze_gravity_turn_effectiveness():
     """
     Compare vertical flight vs gravity turn trajectory
     """
-    # TODO 21: Create two simulations - one with gravity turn, one without
-    
     # Rocket parameters
     rocket_params = {
         'initial_mass': 1000,  # kg
         'fuel_mass': 800,      # kg
-        'thrust': 15000,       # N
-        'specific_impulse': 250, # s
-        'drag_coefficient': 0.3,
-        'reference_area': 1.0   # m^2
+        'thrust': 10000,       # N
+        'specific_impulse': 220, # s
+        'drag_coefficient': 0.6,
+        'reference_area': 2.5   # m^2
     }
+    
+    print(f"Analysis function using: Thrust={rocket_params['thrust']}N, ISP={rocket_params['specific_impulse']}s")
     
     # Simulation with gravity turn
     sim_gravity = RocketSimulation(rocket_params)
-    time_g, states_g = sim_gravity.rk4_integration(0.1, 200)
+    print(f"Gravity sim - Burn time: {sim_gravity.burn_time:.1f}s, mdot: {sim_gravity.mdot:.3f}kg/s")
+    
+    # Change from 0.1 to 0.01 seconds
+    time_g, states_g = sim_gravity.rk4_integration(0.01, 300)  # Smaller dt, longer time
+    print(f"Debug - Gravity turn simulation: {len(time_g)} points, max alt: {np.max(states_g[:, 1]) if len(states_g) > 0 else 0:.1f} m")
+
+    # Check if arrays are empty
+    if len(states_g) == 0:
+        print("ERROR: Gravity turn simulation returned empty array!")
+        return
+
+    sim_vertical = RocketSimulation(rocket_params)
+    original_method = sim_vertical.equations_of_motion
+    sim_vertical.equations_of_motion = sim_vertical.equations_of_motion_vertical
+    time_v, states_v = sim_vertical.rk4_integration(0.01, 300)  # Smaller dt, longer time
+    print(f"Debug - Vertical simulation: {len(time_v)} points, max alt: {np.max(states_v[:, 1]):.1f} m")
+    sim_vertical.equations_of_motion = original_method
+
     
     # TODO 22: Create a modified simulation for vertical flight only
     # Modify the equations_of_motion to keep theta = pi/2 always
     # This will require a new class or method modification
     
-    print("Gravity Turn Analysis:")
-    print(f"Maximum altitude with gravity turn: {np.max(states_g[:, 1]):.1f} m")
-    print(f"Maximum downrange with gravity turn: {np.max(states_g[:, 0]):.1f} m")
+    print("\nGravity Turn Analysis:")
+    print("-" * 30)
+    print(f"Gravity Turn Trajectory:")
+    print(f"  Maximum altitude: {np.max(states_g[:, 1]):.1f} m")
+    print(f"  Maximum downrange: {np.max(states_g[:, 0]):.1f} m")
+    print(f"  Final velocity: {np.sqrt(states_g[-1, 2]**2 + states_g[-1, 3]**2):.1f} m/s")
+    
+    print(f"\nVertical Trajectory:")
+    print(f"  Maximum altitude: {np.max(states_v[:, 1]):.1f} m")
+    print(f"  Maximum downrange: {np.max(states_v[:, 0]):.1f} m") 
+    print(f"  Final velocity: {np.sqrt(states_v[-1, 2]**2 + states_v[-1, 3]**2):.1f} m/s")
+    
+    # Plot comparison
+    plt.figure(figsize=(12, 8))
+    
+    plt.subplot(2, 2, 1)
+    plt.plot(states_g[:, 0], states_g[:, 1], 'b-', label='Gravity Turn', linewidth=2)
+    plt.plot(states_v[:, 0], states_v[:, 1], 'r--', label='Vertical', linewidth=2)
+    plt.xlabel('Downrange (m)')
+    plt.ylabel('Altitude (m)')
+    plt.title('Trajectory Comparison')
+    plt.legend()
+    plt.grid(True)
+    
+    plt.subplot(2, 2, 2)
+    plt.plot(time_g, states_g[:, 1], 'b-', label='Gravity Turn', linewidth=2)
+    plt.plot(time_v, states_v[:, 1], 'r--', label='Vertical', linewidth=2)
+    plt.xlabel('Time (s)')
+    plt.ylabel('Altitude (m)')
+    plt.title('Altitude vs Time')
+    plt.legend()
+    plt.grid(True)
+    
+    plt.subplot(2, 2, 3)
+    vel_g = np.sqrt(states_g[:, 2]**2 + states_g[:, 3]**2)
+    vel_v = np.sqrt(states_v[:, 2]**2 + states_v[:, 3]**2)
+    plt.plot(time_g, vel_g, 'b-', label='Gravity Turn', linewidth=2)
+    plt.plot(time_v, vel_v, 'r--', label='Vertical', linewidth=2)
+    plt.xlabel('Time (s)')
+    plt.ylabel('Velocity (m/s)')
+    plt.title('Velocity vs Time')
+    plt.legend()
+    plt.grid(True)
+    
+    plt.subplot(2, 2, 4)
+    plt.plot(time_g, np.degrees(states_g[:, 5]), 'b-', label='Gravity Turn', linewidth=2)
+    plt.plot(time_v, np.degrees(states_v[:, 5]), 'r--', label='Vertical', linewidth=2)
+    plt.xlabel('Time (s)')
+    plt.ylabel('Pitch Angle (degrees)')
+    plt.title('Pitch Angle vs Time')
+    plt.legend()
+    plt.grid(True)
+    
+    plt.tight_layout()
+    plt.show()
 
 def main():
     """
@@ -305,12 +414,12 @@ def main():
     
     # TODO 23: Define rocket parameters
     rocket_params = {
-        'initial_mass': _______________,     # kg
-        'fuel_mass': _______________,        # kg  
-        'thrust': _______________,           # N
-        'specific_impulse': _______________,  # s
-        'drag_coefficient': 0.3,
-        'reference_area': 1.0                # m^2
+        'initial_mass': 1000,  # kg
+        'fuel_mass': 800,      # kg
+        'thrust': 10000,       # N
+        'specific_impulse': 220, # s
+        'drag_coefficient': 0.6,
+        'reference_area': 2.5   # m^2
     }
     
     # Create simulation object
@@ -326,8 +435,8 @@ def main():
     
     # TODO 24: Run simulations with both integration methods
     print("Running simulations...")
-    time_euler, states_euler = _______________
-    time_rk4, states_rk4 = _______________
+    time_euler, states_euler = sim.euler_integration(0.1, 200)
+    time_rk4, states_rk4 = sim.rk4_integration(0.05, 200)
     
     # Display results
     print("\nResults:")
@@ -341,7 +450,7 @@ def main():
     print(f"  Maximum velocity: {np.max(np.sqrt(states_rk4[:, 2]**2 + states_rk4[:, 3]**2)):.1f} m/s")
     
     # TODO 25: Calculate and display the difference between methods
-    alt_diff = _______________
+    alt_diff = np.max(states_rk4[:, 1]) - np.max(states_euler[:, 1])
     print(f"\nDifference in max altitude: {alt_diff:.1f} m")
     
     # Plot results
